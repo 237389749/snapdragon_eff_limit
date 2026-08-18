@@ -1,0 +1,6 @@
+id=sd_eff_limit
+name=骁龙8Gen3/8Elite能效限频
+version=v1.0.0
+versionCode=100
+author=xcz (8g3/8e 合并版)
+description=根据机型自动识别走 8Gen3(SM8650) 或 8Elite(SM8750) 逻辑：锁定各集群最大频率追求最佳能效点，开机写入一次并锁定权限，支持自定义频率与GPU档位

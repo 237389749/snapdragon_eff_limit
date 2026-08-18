@@ -1,0 +1,142 @@
+#!/system/bin/sh
+# ============================================================
+#  骁龙8Gen3 / 8Elite 能效限频 - 公共函数库
+#  被 post-fs-data.sh / service.sh source 使用
+#
+#  detect_soc 输出：
+#    g3 = 骁龙8Gen3 (SM8650): policy0(cpu0-1) policy2(cpu2-4)
+#                             policy5(cpu5-6) policy7(cpu7)
+#    e8 = 骁龙8Elite (SM8750): policy0(cpu0-5) policy6(cpu6-7)
+# ============================================================
+
+# 检测芯片型号，输出 g3 / e8 / unknown
+detect_soc() {
+    local id=""
+    if [ -f /sys/devices/soc0/chip_id ]; then
+        id=$(cat /sys/devices/soc0/chip_id 2>/dev/null | tr -d '\n\r')
+    fi
+    case "$id" in
+        SM8650) echo "g3" ;;
+        SM8750) echo "e8" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+# 取「≤ 目标值」的最大可用档位；无可用表则原样返回
+# $1: 可用频率节点(如 scaling_available_frequencies), $2: 目标频率
+align_freq() {
+    local avail_file="$1" target="$2" list f best="" lowest=""
+    # 目标必须为纯数字
+    case "$target" in
+        ''|*[!0-9]*) echo "$target"; return 0 ;;
+    esac
+    [ -f "$avail_file" ] || { echo "$target"; return 0; }
+    list=$(cat "$avail_file" 2>/dev/null | tr ',' ' ')
+    [ -z "$list" ] && { echo "$target"; return 0; }
+    for f in $list; do
+        case "$f" in *[!0-9]*) continue ;; esac
+        if [ -z "$lowest" ] || [ "$f" -lt "$lowest" ]; then
+            lowest="$f"
+        fi
+        if [ "$f" -le "$target" ]; then
+            if [ -z "$best" ] || [ "$f" -gt "$best" ]; then
+                best="$f"
+            fi
+        fi
+    done
+    # 目标低于最低档时取最低档
+    [ -n "$best" ] && echo "$best" || echo "$lowest"
+}
+
+# 写入并锁定节点：先 644 写入，成功后再锁 444 防止被覆盖
+# $1: 节点路径, $2: 写入值
+write_lock() {
+    local node="$1" val="$2"
+    [ -f "$node" ] || return 1
+    chmod 644 "$node" 2>/dev/null
+    if ! echo "$val" > "$node" 2>/dev/null; then
+        chmod 444 "$node" 2>/dev/null
+        return 1
+    fi
+    sync
+    chmod 444 "$node" 2>/dev/null
+    return 0
+}
+
+# 唤醒所有核心
+wake_cpus() {
+    local cpu
+    for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -f "$cpu/online" ] && echo 1 > "$cpu/online" 2>/dev/null
+    done
+}
+
+# ---- 骁龙8Gen3 (SM8650)：4 集群 ----
+# 依赖变量：P01_FREQ / P24_FREQ / P56_FREQ / P7_FREQ
+apply_g3() {
+    local ok=0 v
+    # policy0: cpu0-1 小核 A520
+    if [ -d /sys/devices/system/cpu/cpufreq/policy0 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies "$P01_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy2: cpu2-4 中核 A720 高频版
+    if [ -d /sys/devices/system/cpu/cpufreq/policy2 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy2/scaling_available_frequencies "$P24_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy2/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy5: cpu5-6 中核 A720 低频版（锁低频，防止拉高 X4 电压）
+    if [ -d /sys/devices/system/cpu/cpufreq/policy5 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy5/scaling_available_frequencies "$P56_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy5/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy7: cpu7 大核 X4
+    if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy7/scaling_available_frequencies "$P7_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    return $ok
+}
+
+# ---- 骁龙8Elite (SM8750)：2 集群 ----
+# 依赖变量：P0_FREQ / P6_FREQ
+apply_e8() {
+    local ok=0 v
+    # policy0: cpu0-5 大核
+    if [ -d /sys/devices/system/cpu/cpufreq/policy0 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies "$P0_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy6: cpu6-7 超大核（能效黑洞，锁低频）
+    if [ -d /sys/devices/system/cpu/cpufreq/policy6 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy6/scaling_available_frequencies "$P6_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    return $ok
+}
+
+# GPU: Adreno (两平台共用节点，依赖变量 GPU_FREQ)
+apply_gpu() {
+    local v
+    if [ -d /sys/class/kgsl/kgsl-3d0 ]; then
+        v=$(align_freq /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies "$GPU_FREQ")
+        write_lock /sys/class/kgsl/kgsl-3d0/max_gpuclk "$v" && echo 1 || echo 0
+    else
+        echo 0
+    fi
+}
+
+# 按 SOC 应用全部限频，返回成功写入的节点数
+# 依赖外部变量：SOC（g3/e8）+ 对应平台频率变量 + GPU_FREQ
+apply_limits() {
+    local ok=0 gpu_ok
+    wake_cpus
+    case "$SOC" in
+        g3) apply_g3; ok=$? ;;
+        e8) apply_e8; ok=$? ;;
+        *) return 0 ;;
+    esac
+    gpu_ok=$(apply_gpu)
+    [ "$gpu_ok" = "1" ] && ok=$((ok+1))
+    return $ok
+}
