@@ -10,16 +10,35 @@
 # ============================================================
 
 # 检测芯片型号，输出 g3 / e8 / unknown
+# 多来源检测（兼容不同系统 chip_id 格式）：
+#   1) chip_id 精确/代号匹配  2) ro.board.platform  3) CPU policy 节点探测
 detect_soc() {
-    local id=""
+    local id="" plat="" rel=""
     if [ -f /sys/devices/soc0/chip_id ]; then
         id=$(cat /sys/devices/soc0/chip_id 2>/dev/null | tr -d '\n\r')
     fi
+    # 1) chip_id 精确匹配 + 平台代号匹配（SM_LANAI / SM_PINEAPPLE = 8G3，SM_SUN = 8E）
     case "$id" in
-        SM8650) echo "g3" ;;
-        SM8750) echo "e8" ;;
-        *) echo "unknown" ;;
+        SM8650|SM_LANAI|SM_PINEAPPLE) echo "g3"; return 0 ;;
+        SM8750|SM_SUN) echo "e8"; return 0 ;;
     esac
+    # 2) 平台代号（pineapple=8G3，sun=8E）
+    plat=$(getprop ro.board.platform 2>/dev/null)
+    case "$plat" in
+        pineapple) echo "g3"; return 0 ;;
+        sun) echo "e8"; return 0 ;;
+    esac
+    # 3) CPU policy 节点探测兜底：8G3 有 policy7（无 policy6），8E 有 policy6（无 policy7）
+    if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
+        echo "g3"; return 0
+    fi
+    if [ -d /sys/devices/system/cpu/cpufreq/policy6 ]; then
+        rel=$(cat /sys/devices/system/cpu/cpufreq/policy6/related_cpus 2>/dev/null)
+        case " $rel " in
+            *" 6 "*|*" 7 "*) echo "e8"; return 0 ;;
+        esac
+    fi
+    echo "unknown"
 }
 
 # 取「≤ 目标值」的最大可用档位；无可用表则原样返回

@@ -4,24 +4,18 @@ ui_print "- 正在安装 骁龙8Gen3/8Elite 能效限频模块"
 ui_print "- 自动识别机型，按芯片型号走对应限频逻辑"
 ui_print ""
 
-# ---------- 处理器型号检测 ----------
-CHIP_ID_FILE="/sys/devices/soc0/chip_id"
-CHIP_ID=""
-if [ -f "$CHIP_ID_FILE" ]; then
-    CHIP_ID=$(cat "$CHIP_ID_FILE" 2>/dev/null | tr -d '\n\r')
-fi
-SOC=""
-case "$CHIP_ID" in
-    SM8650)
-        SOC="g3"
-        ui_print "✅ 检测到 SM8650 (骁龙8Gen3)，使用 8G3 逻辑 (4集群+5-6锁低频)"
+# ---------- 处理器型号检测（多来源：chip_id / platform / 节点探测） ----------
+[ -f "$MODPATH/common.sh" ] && . "$MODPATH/common.sh"
+SOC=$(detect_soc)
+case "$SOC" in
+    g3)
+        ui_print "✅ 检测到骁龙8Gen3 (SM8650/Lanai)，使用 8G3 逻辑 (4集群+5-6锁低频)"
         ;;
-    SM8750)
-        SOC="e8"
-        ui_print "✅ 检测到 SM8750 (骁龙8Elite)，使用 8E 逻辑 (2集群+超大核拉低)"
+    e8)
+        ui_print "✅ 检测到骁龙8Elite (SM8750/Sun)，使用 8E 逻辑 (2集群+超大核拉低)"
         ;;
     *)
-        ui_print "❌ 错误：无法识别芯片型号 '$CHIP_ID'"
+        ui_print "❌ 错误：无法识别处理器型号"
         ui_print "   此模块仅支持 骁龙8Gen3 (SM8650) 或 骁龙8Elite (SM8750)"
         abort
         ;;
