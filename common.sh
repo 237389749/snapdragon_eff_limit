@@ -157,6 +157,32 @@ apply_gpu() {
     [ "$ok1" = "1" ] || [ "$ok2" = "1" ] && echo 1 || echo 0
 }
 
+# CPU 深层上限锁定：写 msm_performance 的 cpu_max_freq（比 scaling_max_freq 更底层，
+# 实测 chmod 444 后系统无法覆盖，30 秒稳定——CPU 版 max_pwrlevel）
+# 按 SOC 构建 "cpu:值" 串：8G3 按 4 集群、8E 按 2 集群
+apply_cpu_deep_limit() {
+    local str="" cpu n
+    case "$SOC" in
+        g3)
+            for cpu in 0 1; do str="$str $cpu:$P01_FREQ"; done
+            for cpu in 2 3 4; do str="$str $cpu:$P24_FREQ"; done
+            for cpu in 5 6; do str="$str $cpu:$P56_FREQ"; done
+            str="$str 7:$P7_FREQ"
+            ;;
+        e8)
+            for cpu in 0 1 2 3 4 5; do str="$str $cpu:$P0_FREQ"; done
+            for cpu in 6 7; do str="$str $cpu:$P6_FREQ"; done
+            ;;
+        *) return 0 ;;
+    esac
+    n=/sys/kernel/msm_performance/parameters/cpu_max_freq
+    [ -f "$n" ] || return 0
+    chmod 644 "$n" 2>/dev/null
+    echo "${str# }" > "$n" 2>/dev/null
+    sync
+    chmod 444 "$n" 2>/dev/null
+}
+
 # 按 SOC 应用全部限频，返回成功写入的节点数
 # 依赖外部变量：SOC（g3/e8）+ 对应平台频率变量 + GPU_FREQ
 apply_limits() {
@@ -167,6 +193,7 @@ apply_limits() {
         e8) apply_e8; ok=$? ;;
         *) return 0 ;;
     esac
+    apply_cpu_deep_limit
     gpu_ok=$(apply_gpu)
     [ "$gpu_ok" = "1" ] && ok=$((ok+1))
     return $ok
