@@ -135,14 +135,26 @@ apply_e8() {
 }
 
 # GPU: Adreno (两平台共用节点，依赖变量 GPU_FREQ)
+# 双保险：1) 写 max_gpuclk（旧系统/无 perf 接管时有效）
+#         2) 写 max_pwrlevel（新系统 perf 接管 max_gpuclk 时依然有效，实测有效）
+#            max_pwrlevel = 允许的最高功耗档索引(0=最高频档)，从 freq_table_mhz 降序表计算
 apply_gpu() {
-    local v
-    if [ -d /sys/class/kgsl/kgsl-3d0 ]; then
-        v=$(align_freq /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies "$GPU_FREQ")
-        write_lock /sys/class/kgsl/kgsl-3d0/max_gpuclk "$v" && echo 1 || echo 0
-    else
-        echo 0
+    local v idx f mhz ok1=0 ok2=0 g=/sys/class/kgsl/kgsl-3d0
+    [ -d "$g" ] || { echo 0; return; }
+    # 1) max_gpuclk
+    v=$(align_freq "$g/gpu_available_frequencies" "$GPU_FREQ")
+    write_lock "$g/max_gpuclk" "$v" && ok1=1
+    # 2) max_pwrlevel：在降序档位表中找「≤ 目标」的第一档，其索引即上限档
+    idx=0
+    if [ -f "$g/freq_table_mhz" ]; then
+        for f in $(cat "$g/freq_table_mhz" 2>/dev/null | tr ',' ' '); do
+            case "$f" in *[!0-9]*) continue ;; esac
+            [ $((f * 1000000)) -le "$GPU_FREQ" ] && break
+            idx=$((idx+1))
+        done
+        write_lock "$g/max_pwrlevel" "$idx" && ok2=1
     fi
+    [ "$ok1" = "1" ] || [ "$ok2" = "1" ] && echo 1 || echo 0
 }
 
 # 按 SOC 应用全部限频，返回成功写入的节点数
