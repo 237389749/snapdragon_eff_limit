@@ -9,11 +9,11 @@
 #    e8 = 骁龙8Elite (SM8750): policy0(cpu0-5) policy6(cpu6-7)
 # ============================================================
 
-# 检测芯片型号，输出 g3 / e8 / unknown
+# 检测芯片型号，输出 g3 / e8 / b62 / unknown
 # 多来源检测（兼容不同系统 chip_id 格式）：
-#   1) chip_id 精确/代号匹配  2) ro.board.platform  3) CPU policy 节点探测
+#   1) chip_id 精确/代号匹配  2) ro.board.platform / soc machine  3) CPU policy 节点探测
 detect_soc() {
-    local id="" plat="" rel=""
+    local id="" plat="" rel="" machine=""
     if [ -f /sys/devices/soc0/chip_id ]; then
         id=$(cat /sys/devices/soc0/chip_id 2>/dev/null | tr -d '\n\r')
     fi
@@ -22,11 +22,17 @@ detect_soc() {
         SM8650|SM_LANAI|SM_PINEAPPLE) echo "g3"; return 0 ;;
         SM8750|SM_SUN) echo "e8"; return 0 ;;
     esac
-    # 2) 平台代号（pineapple=8G3，sun=8E）
+    # 2) 平台代号（pineapple=8G3，sun=8E，bengal=骁龙662）
     plat=$(getprop ro.board.platform 2>/dev/null)
     case "$plat" in
         pineapple) echo "g3"; return 0 ;;
         sun) echo "e8"; return 0 ;;
+        bengal) echo "b62"; return 0 ;;
+    esac
+    # 2.5) soc machine（部分设备无 chip_id，如 BENGAL）
+    machine=$(cat /sys/devices/soc0/machine 2>/dev/null)
+    case "$machine" in
+        BENGAL|bengal) echo "b62"; return 0 ;;
     esac
     # 3) CPU policy 节点探测兜底：8G3 有 policy7（无 policy6），8E 有 policy6（无 policy7）
     if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
@@ -134,6 +140,23 @@ apply_e8() {
     return $ok
 }
 
+# ---- 骁龙662 (bengal)：2 集群 ----
+# 依赖变量：B0_FREQ (policy0 小核) / B4_FREQ (policy4 大核)
+apply_b62() {
+    local ok=0 v
+    # policy0: cpu0-3 小核 A53
+    if [ -d /sys/devices/system/cpu/cpufreq/policy0 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies "$B0_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy4: cpu4-7 大核 A73
+    if [ -d /sys/devices/system/cpu/cpufreq/policy4 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies "$B4_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    return $ok
+}
+
 # GPU: Adreno (两平台共用节点，依赖变量 GPU_FREQ)
 # 双保险：1) 写 max_gpuclk（旧系统/无 perf 接管时有效）
 #         2) 写 max_pwrlevel（新系统 perf 接管 max_gpuclk 时依然有效，实测有效）
@@ -191,6 +214,7 @@ apply_limits() {
     case "$SOC" in
         g3) apply_g3; ok=$? ;;
         e8) apply_e8; ok=$? ;;
+        b62) apply_b62; ok=$? ;;
         *) return 0 ;;
     esac
     apply_cpu_deep_limit

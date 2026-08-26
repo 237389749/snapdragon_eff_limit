@@ -20,6 +20,11 @@ case "$SOC" in
         P6_FREQ="${P6_FREQ:-1689600}"
         GPU_FREQ="${GPU_FREQ:-607000000}"
         ;;
+    b62)
+        B0_FREQ="${B0_FREQ:-1305600}"
+        B4_FREQ="${B4_FREQ:-1536000}"
+        GPU_FREQ="${GPU_FREQ:-465000000}"
+        ;;
 esac
 
 apply_limits

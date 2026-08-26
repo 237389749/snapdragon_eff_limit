@@ -1,18 +1,21 @@
 #!/system/bin/sh
 # 查看当前各集群与 GPU 的频率限制 / 实时频率（一次性输出，自动识别机型）
-# 多来源识别：chip_id（精确/代号）→ platform → policy 节点探测
+# 多来源识别：chip_id（精确/代号）→ platform/machine → policy 节点探测
 ID=$(cat /sys/devices/soc0/chip_id 2>/dev/null | tr -d '\n\r')
 PLAT=$(getprop ro.board.platform 2>/dev/null)
+MACHINE=$(cat /sys/devices/soc0/machine 2>/dev/null)
 case "$ID" in
     SM8650|SM_LANAI|SM_PINEAPPLE) SOC="g3" ;;
     SM8750|SM_SUN) SOC="e8" ;;
     *)
-        case "$PLAT" in
-            pineapple) SOC="g3" ;;
-            sun) SOC="e8" ;;
+        case "$PLAT|$MACHINE" in
+            pineapple*|*PINEAPPLE*) SOC="g3" ;;
+            sun*|*SUN*) SOC="e8" ;;
+            bengal*|*BENGAL*) SOC="b62" ;;
             *)
                 if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then SOC="g3"
                 elif [ -d /sys/devices/system/cpu/cpufreq/policy6 ]; then SOC="e8"
+                elif [ -d /sys/devices/system/cpu/cpufreq/policy4 ]; then SOC="b62"
                 else SOC="unknown"; fi
                 ;;
         esac
@@ -21,6 +24,7 @@ esac
 case "$SOC" in
     g3) POLICIES="0 2 5 7"; TITLE="骁龙8Gen3 频率状态" ;;
     e8) POLICIES="0 6";     TITLE="骁龙8Elite 频率状态" ;;
+    b62) POLICIES="0 4";    TITLE="骁龙662 频率状态" ;;
     *)  POLICIES="";        TITLE="频率状态 (未识别机型)" ;;
 esac
 

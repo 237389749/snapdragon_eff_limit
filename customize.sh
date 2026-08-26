@@ -14,6 +14,9 @@ case "$SOC" in
     e8)
         ui_print "✅ 检测到骁龙8Elite (SM8750/Sun)，使用 8E 逻辑 (2集群+超大核拉低)"
         ;;
+    b62)
+        ui_print "✅ 检测到骁龙662 (bengal)，使用 bengal 逻辑 (小核+大核)"
+        ;;
     *)
         ui_print "❌ 错误：无法识别处理器型号"
         ui_print "   此模块仅支持 骁龙8Gen3 (SM8650) 或 骁龙8Elite (SM8750)"
@@ -179,19 +182,56 @@ P0_FREQ=1996800
 P6_FREQ=1689600
 
 # ############################################################
-#  GPU 最大频率 (Hz) — 两个平台共用此变量
+# 【C】骁龙662 (bengal) — 4+4 架构（如 BOOX Poke6 电子书）
+# ############################################################
+#
+#  CPU 集群划分 (0-7)：
+#    cpu0-3  小核 A53        最高 1.80GHz   (policy0)
+#    cpu4-7  大核 A73        最高 2.02GHz   (policy4)
+#
+#  💡 能效说明：bengal 是老平台（schedutil governor，无 msm_performance
+#    深层节点），CPU 只能锁 scaling_max_freq；GPU 走 max_gpuclk + max_pwrlevel
+#    双保险。电子书/轻负载设备：小核 1.3G + 大核 1.54G 即可流畅翻页，兼顾续航。
+#
+#  CPU 频率档位参考 (kHz，实测自本机)：
+#  policy0 小核 (cpu0-3)：
+#    300000 614400 864000 1017600 1305600 1420800 1612800 1804800
+#  policy4 大核 (cpu4-7)：
+#    300000 652800 902400 1056000 1401600 1536000 1612800 1804800 2016000
+#
+#  GPU Adreno 610 档位表 (Hz，实测自本机)：
+#    频率(MHz)   档位索引(max_pwrlevel)
+#     950       0 (最高档)
+#     900       1
+#     820       2
+#     745       3
+#     600       4
+#     465       5
+#     320       6 (最低档)
+#
+#  ---------------- bengal 实际生效变量 ----------------
+# 小核 cpu0-3 (policy0) 最大频率 (默认 1305600 ≈ 1.31GHz)
+B0_FREQ=1305600
+
+# 大核 cpu4-7 (policy4) 最大频率 (默认 1536000 ≈ 1.54GHz)
+B4_FREQ=1536000
+
+# ############################################################
+#  GPU 最大频率 (Hz) — 各平台共用此变量
 #    8G3 (Adreno 750) 默认 578000000 (SVS 档)
 #    8E  (Adreno 830) 默认 607000000 (SVS 档)
+#    bengal (Adreno 610) 默认 465000000 (465MHz)
 #  填自己平台 GPU 档位表内的值即可，脚本会自动对齐
 # ############################################################
 GPU_FREQ=607000000
 EOF
     chmod 644 "$FREQ_FILE"
-    # 按机型设置 GPU 默认值（8G3: 578MHz / 8E: 607MHz，均为 SVS 电压档）
-    if [ "$SOC" = "g3" ]; then
-        sed -i 's/^GPU_FREQ=.*/GPU_FREQ=578000000/' "$FREQ_FILE" 2>/dev/null
-    fi
-    ui_print "✅ 已生成频率配置文件 config/freq.conf（含双平台完整档位表）"
+    # 按机型设置 GPU 默认值（8G3: 578MHz / 8E: 607MHz / bengal: 465MHz）
+    case "$SOC" in
+        g3)  sed -i 's/^GPU_FREQ=.*/GPU_FREQ=578000000/' "$FREQ_FILE" 2>/dev/null ;;
+        b62) sed -i 's/^GPU_FREQ=.*/GPU_FREQ=465000000/' "$FREQ_FILE" 2>/dev/null ;;
+    esac
+    ui_print "✅ 已生成频率配置文件 config/freq.conf（含三平台完整档位表）"
 fi
 
 # 设置权限
