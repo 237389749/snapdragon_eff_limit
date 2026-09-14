@@ -33,6 +33,12 @@ case "$SOC" in
         B4_FREQ="${B4_FREQ:-1536000}"
         GPU_FREQ="${GPU_FREQ:-465000000}"
         ;;
+    8p)
+        C0_FREQ="${C0_FREQ:-1132800}"
+        C4_FREQ="${C4_FREQ:-1881600}"
+        C7_FREQ="${C7_FREQ:-1996800}"
+        GPU_FREQ="${GPU_FREQ:-580000000}"
+        ;;
 esac
 
 apply_limits
@@ -54,6 +60,11 @@ ok=$?
         b62)
             echo "  policy0(cpu0-3): $B0_FREQ kHz"
             echo "  policy4(cpu4-7): $B4_FREQ kHz"
+            ;;
+        8p)
+            echo "  policy0(cpu0-3): $C0_FREQ kHz"
+            echo "  policy4(cpu4-6): $C4_FREQ kHz"
+            echo "  policy7(cpu7):   $C7_FREQ kHz"
             ;;
     esac
     echo "  GPU(max_gpuclk): $GPU_FREQ Hz"

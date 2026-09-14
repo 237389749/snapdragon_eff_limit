@@ -1,19 +1,22 @@
 #!/system/bin/sh
 # ============================================================
-#  骁龙8Gen3 / 8Elite 能效限频 - 公共函数库
+#  骁龙多平台能效限频 - 公共函数库
 #  被 post-fs-data.sh / service.sh source 使用
 #
 #  detect_soc 输出：
-#    g3 = 骁龙8Gen3 (SM8650): policy0(cpu0-1) policy2(cpu2-4)
-#                             policy5(cpu5-6) policy7(cpu7)
-#    e8 = 骁龙8Elite (SM8750): policy0(cpu0-5) policy6(cpu6-7)
+#    g3  = 骁龙8Gen3 (SM8650): policy0(cpu0-1) policy2(cpu2-4)
+#                              policy5(cpu5-6) policy7(cpu7)
+#    e8  = 骁龙8Elite (SM8750): policy0(cpu0-5) policy6(cpu6-7)
+#    b62 = 骁龙662 (bengal):   policy0(cpu0-3) policy4(cpu4-7)
+#    8p  = 骁龙8/8+Gen1 (SM8450/SM8475, cape/taro):
+#                              policy0(cpu0-3) policy4(cpu4-6) policy7(cpu7)
 # ============================================================
 
-# 检测芯片型号，输出 g3 / e8 / b62 / unknown
+# 检测芯片型号，输出 g3 / e8 / b62 / 8p / unknown
 # 多来源检测（兼容不同系统 chip_id 格式）：
-#   1) chip_id 精确/代号匹配  2) ro.board.platform / soc machine  3) CPU policy 节点探测
+#   1) chip_id / soc.model  2) ro.board.platform / soc machine  3) CPU policy 节点探测
 detect_soc() {
-    local id="" plat="" rel="" machine=""
+    local id="" plat="" rel="" machine="" smodel=""
     if [ -f /sys/devices/soc0/chip_id ]; then
         id=$(cat /sys/devices/soc0/chip_id 2>/dev/null | tr -d '\n\r')
     fi
@@ -21,27 +24,42 @@ detect_soc() {
     case "$id" in
         SM8650|SM_LANAI|SM_PINEAPPLE) echo "g3"; return 0 ;;
         SM8750|SM_SUN) echo "e8"; return 0 ;;
+        SM8475|SM8450) echo "8p"; return 0 ;;
     esac
-    # 2) 平台代号（pineapple=8G3，sun=8E，bengal=骁龙662）
+    # 1.5) soc.model（部分设备 chip_id 为空但 soc.model 有值，如小米12S）
+    smodel=$(getprop ro.soc.model 2>/dev/null)
+    case "$smodel" in
+        SM8475|SM8450) echo "8p"; return 0 ;;
+    esac
+    # 2) 平台代号（pineapple=8G3，sun=8E，bengal=骁龙662，taro=骁龙8/8+Gen1）
     plat=$(getprop ro.board.platform 2>/dev/null)
     case "$plat" in
         pineapple) echo "g3"; return 0 ;;
         sun) echo "e8"; return 0 ;;
         bengal) echo "b62"; return 0 ;;
+        taro) echo "8p"; return 0 ;;
     esac
-    # 2.5) soc machine（部分设备无 chip_id，如 BENGAL）
+    # 2.5) soc machine（BENGAL=骁龙662，CAPE=骁龙8+Gen1）
     machine=$(cat /sys/devices/soc0/machine 2>/dev/null)
     case "$machine" in
         BENGAL|bengal) echo "b62"; return 0 ;;
+        CAPE|cape) echo "8p"; return 0 ;;
     esac
-    # 3) CPU policy 节点探测兜底：8G3 有 policy7（无 policy6），8E 有 policy6（无 policy7）
-    if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
+    # 3) CPU policy 节点探测兜底：
+    #    8G3 有 policy2；8E 有 policy6；骁龙8Gen1 有 policy4(cpu4-6)+policy7（8核1+3+4）
+    if [ -d /sys/devices/system/cpu/cpufreq/policy2 ]; then
         echo "g3"; return 0
     fi
     if [ -d /sys/devices/system/cpu/cpufreq/policy6 ]; then
         rel=$(cat /sys/devices/system/cpu/cpufreq/policy6/related_cpus 2>/dev/null)
         case " $rel " in
             *" 6 "*|*" 7 "*) echo "e8"; return 0 ;;
+        esac
+    fi
+    if [ -d /sys/devices/system/cpu/cpufreq/policy4 ] && [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
+        rel=$(cat /sys/devices/system/cpu/cpufreq/policy4/related_cpus 2>/dev/null)
+        case " $rel " in
+            *" 6 "*) echo "8p"; return 0 ;;   # 3核(A710)→骁龙8/8+Gen1；4核(bengal)→上面已捕获
         esac
     fi
     echo "unknown"
@@ -157,6 +175,28 @@ apply_b62() {
     return $ok
 }
 
+# ---- 骁龙8/8+ Gen1 (SM8450/SM8475, cape/taro)：3 集群 ----
+# 依赖变量：C0_FREQ (policy0 A510小核) / C4_FREQ (policy4 A710中核) / C7_FREQ (policy7 X2大核)
+apply_8p() {
+    local ok=0 v
+    # policy0: cpu0-3 小核 A510
+    if [ -d /sys/devices/system/cpu/cpufreq/policy0 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies "$C0_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy4: cpu4-6 中核 A710
+    if [ -d /sys/devices/system/cpu/cpufreq/policy4 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies "$C4_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    # policy7: cpu7 大核 X2
+    if [ -d /sys/devices/system/cpu/cpufreq/policy7 ]; then
+        v=$(align_freq /sys/devices/system/cpu/cpufreq/policy7/scaling_available_frequencies "$C7_FREQ")
+        write_lock /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq "$v" && ok=$((ok+1))
+    fi
+    return $ok
+}
+
 # GPU: Adreno (两平台共用节点，依赖变量 GPU_FREQ)
 # 双保险：1) 写 max_gpuclk（旧系统/无 perf 接管时有效）
 #         2) 写 max_pwrlevel（新系统 perf 接管 max_gpuclk 时依然有效，实测有效）
@@ -196,6 +236,11 @@ apply_cpu_deep_limit() {
             for cpu in 0 1 2 3 4 5; do str="$str $cpu:$P0_FREQ"; done
             for cpu in 6 7; do str="$str $cpu:$P6_FREQ"; done
             ;;
+        8p)
+            for cpu in 0 1 2 3; do str="$str $cpu:$C0_FREQ"; done
+            for cpu in 4 5 6; do str="$str $cpu:$C4_FREQ"; done
+            str="$str 7:$C7_FREQ"
+            ;;
         *) return 0 ;;
     esac
     n=/sys/kernel/msm_performance/parameters/cpu_max_freq
@@ -207,7 +252,7 @@ apply_cpu_deep_limit() {
 }
 
 # 按 SOC 应用全部限频，返回成功写入的节点数
-# 依赖外部变量：SOC（g3/e8）+ 对应平台频率变量 + GPU_FREQ
+# 依赖外部变量：SOC（g3/e8/b62/8p）+ 对应平台频率变量 + GPU_FREQ
 apply_limits() {
     local ok=0 gpu_ok
     wake_cpus
@@ -215,6 +260,7 @@ apply_limits() {
         g3) apply_g3; ok=$? ;;
         e8) apply_e8; ok=$? ;;
         b62) apply_b62; ok=$? ;;
+        8p) apply_8p; ok=$? ;;
         *) return 0 ;;
     esac
     apply_cpu_deep_limit
