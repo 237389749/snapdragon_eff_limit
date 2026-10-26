@@ -31,6 +31,18 @@ case "$SOC" in
         C7_FREQ="${C7_FREQ:-1996800}"
         GPU_FREQ="${GPU_FREQ:-580000000}"
         ;;
+    8g1)
+        D0_FREQ="${D0_FREQ:-1401600}"
+        D4_FREQ="${D4_FREQ:-1766400}"
+        D7_FREQ="${D7_FREQ:-1900800}"
+        GPU_FREQ="${GPU_FREQ:-491000000}"
+        ;;
+    8g2)
+        E0_FREQ="${E0_FREQ:-1555200}"
+        E3_FREQ="${E3_FREQ:-2054400}"
+        E7_FREQ="${E7_FREQ:-2092800}"
+        GPU_FREQ="${GPU_FREQ:-475000000}"
+        ;;
 esac
 
 apply_limits
